@@ -4,7 +4,7 @@ description: >-
   input mirroring the auth.json schema, validated before Composer ever runs.
 author: 'Les Peabody'
 branding:
-  icon: 'key'
+  icon: 'lock'
   color: 'purple'
 
 inputs:
