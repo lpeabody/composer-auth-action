@@ -1,7 +1,7 @@
 name: 'Composer Auth'
 description: >-
-  Build Composer authentication (COMPOSER_AUTH and/or auth.json) from a YAML
-  input mirroring the auth.json schema, validated before Composer ever runs.
+  Build COMPOSER_AUTH and/or auth.json from YAML mirroring Composer's
+  auth.json schema, validated before Composer runs.
 author: 'Les Peabody'
 branding:
   icon: 'lock'
