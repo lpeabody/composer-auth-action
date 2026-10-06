@@ -1,0 +1,327 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure PyYAML
+        shell: bash
+        run: python3 -c 'import yaml' || python3 -m pip install --quiet --disable-pip-version-check --user pyyaml
+      - name: Run unit tests
+        shell: bash
+        run: python3 -m unittest discover -s tests -v
+
+  action:
+    name: Action self-test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      # Dummy credentials. Nothing here is real.
+      DUMMY_ACF_KEY: dummy-acf-key-0001
+      DUMMY_OC_TOKEN: dummy-objectcache-token-0002
+      DUMMY_BEARER: dummy-bearer-0003
+      DUMMY_GL_TOKEN: dummy-gitlab-token-0004
+      DUMMY_BB_SECRET: dummy-bitbucket-secret-0005
+      DUMMY_FJ_TOKEN: dummy-forgejo-token-0006
+      DUMMY_CERT_PASS: dummy-cert-pass-0007
+      DUMMY_GL_OAUTH: dummy-gitlab-oauth-0008
+    steps:
+      - uses: actions/checkout@v4
+
+      # ------------------------------------------------------------------ #
+      # Composition: all nine methods, env export and file write together.
+      # ------------------------------------------------------------------ #
+      - name: Compose (all methods, env + file)
+        id: all
+        uses: ./
+        with:
+          write-file: true
+          file-path: ${{ runner.temp }}/all/auth.json
+          auth: |
+            http-basic:
+              connect.advancedcustomfields.com:
+                username: "${{ env.DUMMY_ACF_KEY }}"
+                password: https://example.com
+              objectcache.pro:
+                username: token
+                password: "${{ env.DUMMY_OC_TOKEN }}"
+            bearer:
+              bearer.example.com: "${{ env.DUMMY_BEARER }}"
+            github-oauth:
+              ghe.example.com: dummy-ghe-token
+            gitlab-oauth:
+              gitlab.com: "${{ env.DUMMY_GL_OAUTH }}"
+              gitlab.example.com:
+                token: dummy-gl-oauth-obj
+                refresh-token: dummy-gl-refresh
+                expires-at: 1700000000
+            gitlab-token:
+              gitlab.com: "${{ env.DUMMY_GL_TOKEN }}"
+              gitlab.example.com:
+                username: gl-user
+                token: dummy-gl-token-obj
+            bitbucket-oauth:
+              bitbucket.org:
+                consumer-key: dummy-bb-key
+                consumer-secret: "${{ env.DUMMY_BB_SECRET }}"
+            custom-headers:
+              headers.example.com:
+                - "X-Api-Key: dummy-header-secret"
+                - "X-Other: value"
+            client-certificate:
+              cert.example.com:
+                local_cert: /certs/client.pem
+                local_pk: /certs/client.key
+                passphrase: "${{ env.DUMMY_CERT_PASS }}"
+            forgejo-token:
+              codeberg.org:
+                username: fj-user
+                token: "${{ env.DUMMY_FJ_TOKEN }}"
+
+      - name: Assert composed JSON, env export and file write
+        shell: bash
+        env:
+          RUN_TOKEN: ${{ github.token }}
+          FILE_PATH: ${{ steps.all.outputs.file-path }}
+          EXPECTED_FILE: ${{ runner.temp }}/all/auth.json
+        run: |
+          set -euo pipefail
+          test -n "${COMPOSER_AUTH:-}" || { echo 'COMPOSER_AUTH was not exported'; exit 1; }
+          test "$FILE_PATH" = "$EXPECTED_FILE" || { echo "file-path output '$FILE_PATH' != '$EXPECTED_FILE'"; exit 1; }
+          test -f "$FILE_PATH" || { echo "auth.json not written at $FILE_PATH"; exit 1; }
+
+          expected="$(jq -S -n --arg acf "$DUMMY_ACF_KEY" --arg oc "$DUMMY_OC_TOKEN" --arg bearer "$DUMMY_BEARER" \
+            --arg gl "$DUMMY_GL_TOKEN" --arg bb "$DUMMY_BB_SECRET" --arg fj "$DUMMY_FJ_TOKEN" \
+            --arg cert "$DUMMY_CERT_PASS" --arg gloauth "$DUMMY_GL_OAUTH" --arg run "$RUN_TOKEN" '{
+              "http-basic": {
+                "connect.advancedcustomfields.com": {"username": $acf, "password": "https://example.com"},
+                "objectcache.pro": {"username": "token", "password": $oc}
+              },
+              "bearer": {"bearer.example.com": $bearer},
+              "github-oauth": {"github.com": $run, "ghe.example.com": "dummy-ghe-token"},
+              "gitlab-oauth": {
+                "gitlab.com": $gloauth,
+                "gitlab.example.com": {"token": "dummy-gl-oauth-obj", "refresh-token": "dummy-gl-refresh", "expires-at": 1700000000}
+              },
+              "gitlab-token": {"gitlab.com": $gl, "gitlab.example.com": {"username": "gl-user", "token": "dummy-gl-token-obj"}},
+              "bitbucket-oauth": {"bitbucket.org": {"consumer-key": "dummy-bb-key", "consumer-secret": $bb}},
+              "custom-headers": {"headers.example.com": ["X-Api-Key: dummy-header-secret", "X-Other: value"]},
+              "client-certificate": {"cert.example.com": {"local_cert": "/certs/client.pem", "local_pk": "/certs/client.key", "passphrase": $cert}},
+              "forgejo-token": {"codeberg.org": {"username": "fj-user", "token": $fj}}
+            }')"
+
+          # Compare normalised JSON without printing either side (both contain the run token).
+          if [ "$(jq -S . <<<"$COMPOSER_AUTH")" != "$expected" ]; then
+            echo 'COMPOSER_AUTH does not match the expected document. Differing keys:'
+            diff <(jq -S 'paths(scalars) | join(".")' <<<"$COMPOSER_AUTH") <(jq -S 'paths(scalars) | join(".")' <<<"$expected") || true
+            exit 1
+          fi
+          if [ "$(jq -S . "$FILE_PATH")" != "$expected" ]; then
+            echo 'auth.json does not match the expected document'
+            exit 1
+          fi
+          echo 'Composed JSON matches on both outputs.'
+
+      - name: Composer honors COMPOSER_AUTH and the written auth.json
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          AUTH_DIR: ${{ runner.temp }}/all
+        run: |
+          set -euo pipefail
+          # `composer diagnose` prints 'Checking github.com oauth access' only when a github-oauth
+          # token is configured; without one it prints 'Checking github.com rate limit' instead.
+          out="$(composer diagnose 2>&1 || true)"
+          grep -q 'Checking github.com oauth access' <<<"$out" || { echo 'composer did not pick up github-oauth from COMPOSER_AUTH'; grep -i 'github' <<<"$out" || true; exit 1; }
+          out="$(env -u COMPOSER_AUTH COMPOSER_HOME="$AUTH_DIR" composer diagnose 2>&1 || true)"
+          grep -q 'Checking github.com oauth access' <<<"$out" || { echo 'composer did not pick up github-oauth from the written auth.json'; grep -i 'github' <<<"$out" || true; exit 1; }
+          echo 'Composer honours both outputs.'
+
+      # ------------------------------------------------------------------ #
+      # Default github-oauth entry behaviour.
+      # ------------------------------------------------------------------ #
+      - name: Compose (github-token empty)
+        uses: ./
+        with:
+          github-token: ''
+          export-env: false
+          write-file: true
+          file-path: ${{ runner.temp }}/no-gh/auth.json
+          auth: |
+            bearer:
+              bearer.example.com: "${{ env.DUMMY_BEARER }}"
+
+      - name: Compose (explicit github-oauth overrides default)
+        uses: ./
+        with:
+          export-env: false
+          write-file: true
+          file-path: ${{ runner.temp }}/explicit-gh/auth.json
+          auth: |
+            github-oauth:
+              github.com: dummy-explicit-github-token
+
+      - name: Assert default github-oauth behaviour
+        shell: bash
+        env:
+          NO_GH: ${{ runner.temp }}/no-gh/auth.json
+          EXPLICIT: ${{ runner.temp }}/explicit-gh/auth.json
+        run: |
+          set -euo pipefail
+          jq -e 'has("github-oauth") | not' "$NO_GH" >/dev/null || { echo 'github-oauth present despite empty github-token'; exit 1; }
+          jq -e '."github-oauth"."github.com" == "dummy-explicit-github-token"' "$EXPLICIT" >/dev/null || { echo 'explicit github-oauth entry was overridden'; exit 1; }
+          echo 'Default github-oauth behaviour OK.'
+
+      # ------------------------------------------------------------------ #
+      # File merge and default (Composer global) location.
+      # ------------------------------------------------------------------ #
+      - name: Seed an existing auth.json in a fake COMPOSER_HOME
+        shell: bash
+        env:
+          COMPOSER_HOME: ${{ runner.temp }}/composer-home
+        run: |
+          set -euo pipefail
+          mkdir -p "$COMPOSER_HOME"
+          cat > "$COMPOSER_HOME/auth.json" <<'JSON'
+          {
+            "http-basic": {
+              "keep.example.com": {"username": "keep-user", "password": "keep-pass"},
+              "objectcache.pro": {"username": "old-user", "password": "old-pass"}
+            },
+            "bearer": {"keep.example.com": "keep-bearer"}
+          }
+          JSON
+
+      - name: Compose (write-file, default location, merge)
+        id: merge
+        uses: ./
+        env:
+          COMPOSER_HOME: ${{ runner.temp }}/composer-home
+        with:
+          export-env: false
+          write-file: true
+          auth: |
+            http-basic:
+              objectcache.pro:
+                username: token
+                password: "${{ env.DUMMY_OC_TOKEN }}"
+
+      - name: Assert merge semantics and default path
+        shell: bash
+        env:
+          FILE_PATH: ${{ steps.merge.outputs.file-path }}
+          EXPECTED: ${{ runner.temp }}/composer-home/auth.json
+        run: |
+          set -euo pipefail
+          test "$FILE_PATH" = "$EXPECTED" || { echo "default file-path '$FILE_PATH' != '$EXPECTED'"; exit 1; }
+          jq -e --arg oc "$DUMMY_OC_TOKEN" '
+            ."http-basic"."keep.example.com" == {"username": "keep-user", "password": "keep-pass"}
+            and ."http-basic"."objectcache.pro" == {"username": "token", "password": $oc}
+            and .bearer."keep.example.com" == "keep-bearer"
+            and (."github-oauth"."github.com" | length) > 0
+          ' "$FILE_PATH" >/dev/null || { echo 'merged auth.json has unexpected content'; jq 'paths(scalars) | join(".")' "$FILE_PATH"; exit 1; }
+          echo 'Merge semantics OK.'
+
+      # ------------------------------------------------------------------ #
+      # Validation failures. Each must fail the step and write nothing.
+      # ------------------------------------------------------------------ #
+      - name: Fail - unknown method
+        id: fail_unknown
+        continue-on-error: true
+        uses: ./
+        with:
+          export-env: false
+          write-file: true
+          file-path: ${{ runner.temp }}/fail/unknown.json
+          auth: |
+            http-digest:
+              example.com: nope
+
+      - name: Fail - wrong shape
+        id: fail_shape
+        continue-on-error: true
+        uses: ./
+        with:
+          export-env: false
+          write-file: true
+          file-path: ${{ runner.temp }}/fail/shape.json
+          auth: |
+            http-basic:
+              example.com: just-a-string
+
+      - name: Fail - empty credential
+        id: fail_empty
+        continue-on-error: true
+        uses: ./
+        with:
+          export-env: false
+          write-file: true
+          file-path: ${{ runner.temp }}/fail/empty.json
+          auth: |
+            http-basic:
+              example.com:
+                username: user
+                password: ${{ env.DOES_NOT_EXIST }}
+
+      - name: Fail - invalid YAML
+        id: fail_yaml
+        continue-on-error: true
+        uses: ./
+        with:
+          export-env: false
+          write-file: true
+          file-path: ${{ runner.temp }}/fail/yaml.json
+          auth: |
+            http-basic:
+              example.com: {username: u, password: [
+
+      - name: Fail - no output enabled
+        id: fail_none
+        continue-on-error: true
+        uses: ./
+        with:
+          export-env: false
+          write-file: false
+          auth: |
+            bearer:
+              example.com: token
+
+      - name: Assert validation failures
+        shell: bash
+        env:
+          FAIL_DIR: ${{ runner.temp }}/fail
+          O_UNKNOWN: ${{ steps.fail_unknown.outcome }}
+          O_SHAPE: ${{ steps.fail_shape.outcome }}
+          O_EMPTY: ${{ steps.fail_empty.outcome }}
+          O_YAML: ${{ steps.fail_yaml.outcome }}
+          O_NONE: ${{ steps.fail_none.outcome }}
+        run: |
+          set -euo pipefail
+          rc=0
+          for pair in "unknown:$O_UNKNOWN" "shape:$O_SHAPE" "empty:$O_EMPTY" "yaml:$O_YAML" "none:$O_NONE"; do
+            name="${pair%%:*}"; outcome="${pair#*:}"
+            if [ "$outcome" != 'failure' ]; then echo "expected '$name' to fail, outcome was '$outcome'"; rc=1; fi
+          done
+          if [ -d "$FAIL_DIR" ] && [ -n "$(ls -A "$FAIL_DIR")" ]; then
+            echo 'a failing invocation wrote a file:'; ls -la "$FAIL_DIR"; rc=1
+          fi
+          [ "$rc" -eq 0 ] && echo 'All invalid inputs failed the step without writing output.'
+          exit "$rc"

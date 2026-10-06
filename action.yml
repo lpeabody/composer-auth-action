@@ -1,0 +1,67 @@
+name: 'Composer Auth'
+description: >-
+  Build Composer authentication (COMPOSER_AUTH and/or auth.json) from a YAML
+  input mirroring the auth.json schema, validated before Composer ever runs.
+author: 'Les Peabody'
+branding:
+  icon: 'key'
+  color: 'purple'
+
+inputs:
+  auth:
+    description: >-
+      Multiline YAML mirroring the Composer auth.json schema. Top-level keys
+      are authentication methods (http-basic, bearer, github-oauth,
+      gitlab-oauth, gitlab-token, bitbucket-oauth, custom-headers,
+      client-certificate, forgejo-token); each is keyed by host.
+    required: false
+    default: ''
+  github-token:
+    description: >-
+      Token for the default github-oauth entry for this run's GitHub host.
+      Defaults to the run token. Pass an empty string to omit the entry. An
+      explicit github-oauth entry in `auth` for the same host takes precedence.
+    required: false
+    default: ${{ github.token }}
+  export-env:
+    description: >-
+      Write the composed JSON to the COMPOSER_AUTH environment variable for all
+      later steps in the job.
+    required: false
+    default: 'true'
+  write-file:
+    description: 'Write the composed JSON to an auth.json file.'
+    required: false
+    default: 'false'
+  file-path:
+    description: >-
+      Path of the file written when write-file is true. Defaults to Composer's
+      global auth.json (COMPOSER_HOME/auth.json, resolved the way Composer
+      resolves it), which is outside the workspace. An existing file is merged;
+      entries from this run take precedence.
+    required: false
+    default: ''
+
+outputs:
+  file-path:
+    description: 'Absolute path of the auth.json written, or empty when write-file is false.'
+    value: ${{ steps.compose.outputs.file-path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: compose
+      shell: bash
+      env:
+        INPUT_AUTH: ${{ inputs.auth }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_EXPORT_ENV: ${{ inputs.export-env }}
+        INPUT_WRITE_FILE: ${{ inputs.write-file }}
+        INPUT_FILE_PATH: ${{ inputs.file-path }}
+      run: |
+        set -euo pipefail
+        PY="$(command -v python3 || command -v python)"
+        if ! "$PY" -c 'import yaml' 2>/dev/null; then
+          "$PY" -m pip install --quiet --disable-pip-version-check --user pyyaml
+        fi
+        "$PY" "$GITHUB_ACTION_PATH/compose_auth.py"
