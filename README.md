@@ -69,7 +69,8 @@ The composed JSON is deliberately **not** an output.
 ## Supported methods
 
 The accepted shapes are taken from Composer's own
-[`composer-schema.json`](https://github.com/composer/composer/blob/main/res/composer-schema.json).
+[`composer-schema.json`](https://github.com/composer/composer/blob/main/res/composer-schema.json),
+at the Composer release recorded in [`SCHEMA_VERSION`](SCHEMA_VERSION).
 
 | Method | Value per host |
 |---|---|
@@ -200,9 +201,79 @@ invalid input fails the step without writing anything.
 
 ## Versioning
 
-Releases are tagged `vX.Y.Z`. The `Release` workflow moves the floating major
-tag (`v1`) to each published release, so `@v1` always tracks the latest
-compatible version.
+This action follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
+Releases are tagged `vMAJOR.MINOR.PATCH` with a `v` prefix, as is conventional
+for GitHub Actions.
+
+### What counts as the public API
+
+The versioned surface is everything a workflow can observe:
+
+- the input names, their defaults, and their documented semantics;
+- the output names and their documented values;
+- the accepted YAML schema (methods, value shapes, validation rules);
+- the composed JSON for a given input;
+- the default `auth.json` location and the merge behaviour;
+- the log-safety guarantees (no composed JSON or credential value is printed).
+
+The Python module layout, function names, and test suite are internal and may
+change in any release.
+
+### Relationship to Composer's schema
+
+The accepted YAML mirrors the `config` section of Composer's
+[`composer-schema.json`](https://github.com/composer/composer/blob/main/res/composer-schema.json)
+as of the Composer release named in [`SCHEMA_VERSION`](SCHEMA_VERSION). The
+action tracks that file, so changes upstream flow through as follows:
+
+| Composer change | Action release |
+|---|---|
+| Adds a method, an optional key, or a wider value type | MINOR |
+| Removes or renames a method or key, adds a required key, or narrows a value type | MAJOR, released only once the Composer version that made the change is generally available |
+| Changes only descriptions or documentation | none |
+
+The action never accepts input that the referenced Composer release would
+reject, and never rejects input it would accept. Where the two disagree, the
+action is wrong and the fix is a PATCH. Each release note states the Composer
+version whose schema it matches.
+
+If you are on a newer Composer and need a method the action does not yet
+know, open an issue naming the Composer version; support lands as a MINOR.
+
+### Bump rules
+
+| Change | Bump | Examples |
+|---|---|---|
+| Incompatible | **MAJOR** | Removing or renaming an input or output. Changing a default. Changing the composed JSON for input that was previously valid. Rejecting YAML that an earlier release accepted. Changing where the default `auth.json` is written. |
+| Backward-compatible addition | **MINOR** | Adding an optional input or output. Accepting a new authentication method or value shape that Composer adds. Deprecating an input while still honouring it. |
+| Backward-compatible fix | **PATCH** | Correcting a validation message, the Composer home resolution, or the merge logic so behaviour matches the documentation. Dependency and CI changes. |
+
+Tightening validation to reject input that was already invalid for Composer
+counts as a fix. Tightening it to reject input Composer accepts is a breaking
+change.
+
+Deprecations are announced in the release notes at least one MINOR release
+before the MAJOR release that removes them.
+
+### Tags and pinning
+
+| Reference | Moves? | Use when |
+|---|---|---|
+| `@v1` | Yes, to the latest `v1.x.y` release | You want fixes and additions automatically and can tolerate no breaking changes. The default for most workflows. |
+| `@v1.2.3` | Never | You want a fixed version and will bump deliberately. |
+| `@<commit sha>` | Never | You require an immutable reference, for example under a supply-chain policy. |
+
+The `Release` workflow force-moves the floating major tag (`v1`, `v2`, ...)
+to each published release of that major. Full-version tags are never moved or
+deleted; a mistaken release is followed by a new release, not a re-tag. When a
+new major ships, the previous floating tag stays at its last release and only
+receives backports if a security issue warrants one.
+
+### Release notes
+
+GitHub Releases are the changelog. Each release lists changes grouped as
+breaking, added, and fixed, and names any deprecated inputs along with their
+replacement.
 
 ## License
 

@@ -34,7 +34,8 @@ ENV_VAR = "COMPOSER_AUTH"
 DEFAULT_GITHUB_HOST = "github.com"
 
 # Value shapes per authentication method, mirroring the ``config`` section of
-# ``res/composer-schema.json`` in composer/composer.
+# ``res/composer-schema.json`` in composer/composer at the release recorded in
+# the SCHEMA_VERSION file at the repository root. Update both together.
 #
 # kind "string":           a non-empty string.
 # kind "object":           a mapping; ``required`` keys must be present,

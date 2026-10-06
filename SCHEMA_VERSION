@@ -1,0 +1,14 @@
+# Composer release whose auth schema this action mirrors.
+#
+# Source: res/composer-schema.json in composer/composer, `config` section,
+# the nine authentication methods (http-basic, bearer, github-oauth,
+# gitlab-oauth, gitlab-token, bitbucket-oauth, custom-headers,
+# client-certificate, forgejo-token). Mirrored in SCHEMA in compose_auth.py.
+#
+# Update this file whenever SCHEMA is re-synced, and state the new Composer
+# version in the release notes. See README.md, "Relationship to Composer's
+# schema", for how upstream changes map to action releases.
+composer=2.10.3
+schema-file=res/composer-schema.json
+verified-identical-to=main@dfda78af1ece6a86d32e728d70697f1e3ae2fedf
+synced=2026-10-06
