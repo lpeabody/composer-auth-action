@@ -42,11 +42,17 @@ DEFAULT_GITHUB_HOST = "github.com"
 #                          ``optional`` keys may be, anything else is an error.
 # kind "string-or-object": either of the above.
 # kind "string-list":      a non-empty list of non-empty strings.
+#
+# "secret" lists the keys of an object whose values are credentials and must
+# be masked in the log. String and string-list values are always secrets.
+# Usernames, certificate paths and the Bitbucket consumer key are identifiers
+# and are left out; see secret_values().
 SCHEMA: dict[str, dict[str, Any]] = {
     "http-basic": {
         "kind": "object",
         "required": {"username": str, "password": str},
         "optional": {},
+        "secret": ("password",),
     },
     "bearer": {"kind": "string"},
     "github-oauth": {"kind": "string"},
@@ -54,11 +60,13 @@ SCHEMA: dict[str, dict[str, Any]] = {
         "kind": "string-or-object",
         "required": {"token": str},
         "optional": {"refresh-token": str, "expires-at": int},
+        "secret": ("token", "refresh-token"),
     },
     "gitlab-token": {
         "kind": "string-or-object",
         "required": {"username": str, "token": str},
         "optional": {},
+        "secret": ("token",),
     },
     "bitbucket-oauth": {
         "kind": "object",
@@ -66,17 +74,20 @@ SCHEMA: dict[str, dict[str, Any]] = {
         # Composer writes these two itself; they are accepted for parity with
         # the schema but you should not normally set them.
         "optional": {"access-token": str, "access-token-expiration": int},
+        "secret": ("consumer-secret", "access-token"),
     },
     "custom-headers": {"kind": "string-list"},
     "client-certificate": {
         "kind": "object",
         "required": {"local_cert": str},
         "optional": {"local_pk": str, "passphrase": str},
+        "secret": ("passphrase",),
     },
     "forgejo-token": {
         "kind": "object",
         "required": {"username": str, "token": str},
         "optional": {},
+        "secret": ("token",),
     },
 }
 
@@ -208,6 +219,51 @@ def add_default_github_token(
         return auth
     auth["github-oauth"] = {host: token, **existing}
     return auth
+
+
+# --------------------------------------------------------------------------- #
+# Masking
+# --------------------------------------------------------------------------- #
+
+def secret_values(auth: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """Every credential string in a validated ``auth`` mapping.
+
+    String and string-list values are credentials outright; for objects the
+    schema's ``secret`` keys say which members are. Usernames, certificate
+    paths and the Bitbucket consumer key are identifiers rather than secrets
+    and are deliberately left out: a username is often an ordinary word such
+    as ``token``, and masking it would garble every later log line. A
+    username that is itself a credential must come from ``${{ secrets.* }}``,
+    which Actions masks on its own.
+    """
+    found: list[str] = []
+    for method, hosts in auth.items():
+        secret_keys = SCHEMA[method].get("secret", ())
+        for value in hosts.values():
+            if isinstance(value, str):
+                found.append(value)
+            elif isinstance(value, list):
+                found.extend(item for item in value if isinstance(item, str))
+            elif isinstance(value, dict):
+                found.extend(value[key] for key in secret_keys if isinstance(value.get(key), str))
+    return found
+
+
+def mask_forms(value: str) -> list[str]:
+    """The spellings of ``value`` that can reach a log and must be masked.
+
+    Masks match exact substrings, so the raw value (as a later step would
+    print it from a variable) and its JSON-escaped forms (as ``cat auth.json``
+    or ``echo "$COMPOSER_AUTH"`` would print it) are registered separately
+    whenever they differ. ``auth.json`` keeps non-ASCII characters while
+    ``COMPOSER_AUTH`` escapes them, hence both encodings.
+    """
+    forms = [value]
+    for ensure_ascii in (False, True):
+        encoded = json.dumps(value, ensure_ascii=ensure_ascii)[1:-1]
+        if encoded not in forms:
+            forms.append(encoded)
+    return forms
 
 
 # --------------------------------------------------------------------------- #
@@ -366,8 +422,12 @@ def run(env: Mapping[str, str], out) -> None:
         raise AuthError("nothing to compose: auth is empty and github-token is empty")
 
     compact = json.dumps(auth, separators=(",", ":"), ensure_ascii=True)
-    # Mask the assembled document so no later step can echo it into the log.
-    _command(out, "add-mask", compact)
+    # Register masks before anything else is written: the whole document as
+    # exported, then each credential in every spelling it could be echoed in,
+    # so neither `echo "$COMPOSER_AUTH"` nor `cat auth.json` leaks a value.
+    masks = dict.fromkeys([compact] + [form for value in secret_values(auth) for form in mask_forms(value)])
+    for mask in masks:
+        _command(out, "add-mask", mask)
 
     entry_count = sum(len(hosts) for hosts in auth.values())
     out.write(f"Composed Composer auth with {entry_count} host entr{'y' if entry_count == 1 else 'ies'}:\n")

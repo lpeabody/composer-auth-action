@@ -174,12 +174,45 @@ inside the workspace would ship with it. Keep the default location, or point
 `file-path` somewhere under `${{ runner.temp }}`. The action emits a workflow
 warning when the resolved path is inside `GITHUB_WORKSPACE`.
 
+### Self-hosted runners keep the file
+
+GitHub-hosted runners are discarded after each job. On a self-hosted runner
+the default location is the runner user's Composer home, which survives the
+job and is readable by every workflow that runner serves, from any repository.
+Because existing entries are merged rather than replaced, credentials
+accumulate there over time. On shared or long-lived runners, point `file-path`
+under `${{ runner.temp }}`, which the runner empties at the start and end of
+every job, or delete the file in a final step that runs `if: always()`.
+
 ## Log safety
 
-The action never prints the composed JSON or any credential value. Values that
-came from `${{ secrets.* }}` are already masked by Actions; the action also
-registers the whole composed document as a mask so a later step cannot echo it
-into the log. The step log lists only method names and hosts.
+The script never prints the composed JSON or a credential value; its step
+output lists only method names and hosts. Before writing anything else it
+registers masks with the runner so later steps cannot echo credentials either:
+
+- the whole composed document, in the compact form exported as `COMPOSER_AUTH`;
+- every credential value on its own (passwords, tokens, bearer values, refresh
+  tokens, consumer secrets, passphrases and custom header lines), both as typed
+  and in its JSON-escaped spellings, so `echo "$COMPOSER_AUTH"`, `jq`, and
+  `cat auth.json` are all masked.
+
+Usernames, certificate paths and the Bitbucket consumer key are identifiers
+rather than secrets and are not masked on their own: a username is often an
+ordinary word such as `token`, and masking it would garble every later log
+line.
+
+Two things are outside the action's control:
+
+- **The runner prints inputs before the action runs.** Every `uses:` step
+  logs its `with:` values in the step header, and the composite step logs its
+  environment. Values that came from `${{ secrets.* }}` are masked there by
+  Actions. A credential pasted as a literal, read from `vars.*`, or produced
+  by an earlier step without `::add-mask::` is printed in full before this
+  action can register anything. Always source credentials from
+  `${{ secrets.* }}`, including a username that is itself a credential such
+  as an ACF licence key.
+- **Host names are logged.** The step output lists the hosts each method
+  authenticates against.
 
 ## Requirements
 

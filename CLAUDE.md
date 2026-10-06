@@ -46,15 +46,19 @@ a unit test and a matching assertion in that workflow.
 ## Architecture of compose_auth.py
 
 Pipeline in `run()`: parse booleans, `parse_yaml` → `validate` →
-`add_default_github_token` → emit `::add-mask::` for the compact JSON → log
-methods/hosts only → `append_github_file` to `GITHUB_ENV` → optionally
+`add_default_github_token` → emit `::add-mask::` for the compact JSON and for
+every credential (`secret_values` × `mask_forms`: raw plus JSON-escaped
+spellings) → log methods/hosts only → `append_github_file` to `GITHUB_ENV` → optionally
 `resolve_file_path` / `load_existing` / `merge` / `write_file` → write the
 `file-path` output. `main()` converts `AuthError` into a `::error::` command
 and exit code 1; anything else is a genuine bug and should traceback.
 
 - **`SCHEMA`** is the single source of truth for accepted shapes. Each method
   has a `kind` (`string`, `object`, `string-or-object`, `string-list`) plus
-  `required`/`optional` key→type maps. Adding a method means adding a
+  `required`/`optional` key→type maps. Object kinds also list `secret` keys,
+  the members `secret_values` masks; usernames, cert paths and the Bitbucket
+  consumer key are identifiers and stay out (a test enforces every object
+  kind declares at least one). Adding a method means adding a
   `SCHEMA` entry, a row in the README table, a line in `action.yml`'s `auth`
   description, and a host in `ALL_METHODS_YAML` + the CI workflow's
   all-methods step. Shapes come from Composer's `res/composer-schema.json`.

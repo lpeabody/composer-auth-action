@@ -157,6 +157,43 @@ class ValidateTests(unittest.TestCase):
             self.assertNotIn("SHOULD-NOT-LEAK", str(ctx.exception))
 
 
+class MaskTests(unittest.TestCase):
+    def test_secret_values_cover_credentials_but_not_identifiers(self):
+        found = ca.secret_values(load(ALL_METHODS_YAML))
+        self.assertEqual(sorted(found), sorted([
+            "https://example.com",            # http-basic password
+            "BEARER-SECRET", "GHE-SECRET",
+            "GL-OAUTH-SECRET", "GL-OAUTH-OBJ-SECRET", "GL-REFRESH",
+            "GL-TOKEN-SECRET", "GL-TOKEN-OBJ-SECRET",
+            "BB-SECRET",
+            "X-Api-Key: HEADER-SECRET", "X-Other: value",
+            "CERT-PASS",
+            "FJ-SECRET",
+        ]))
+        for identifier in ("ACF-KEY-123", "gl-user", "fj-user", "BB-KEY", "/certs/client.pem", "/certs/client.key"):
+            self.assertNotIn(identifier, found)
+
+    def test_secret_values_include_default_github_token(self):
+        auth = ca.add_default_github_token({}, "RUN-TOKEN", "https://github.com")
+        self.assertEqual(ca.secret_values(auth), ["RUN-TOKEN"])
+
+    def test_every_object_method_declares_secret_keys(self):
+        for method, spec in ca.SCHEMA.items():
+            if spec["kind"] in ("object", "string-or-object"):
+                allowed = set(spec["required"]) | set(spec["optional"])
+                self.assertTrue(spec.get("secret"), f"{method} declares no secret keys")
+                self.assertTrue(set(spec["secret"]) <= allowed, f"{method}: secret keys not in schema")
+
+    def test_mask_forms_plain_value_has_one_form(self):
+        self.assertEqual(ca.mask_forms("plain-token"), ["plain-token"])
+
+    def test_mask_forms_adds_json_escaped_spelling(self):
+        self.assertEqual(ca.mask_forms('say "hi"\\now'), ['say "hi"\\now', 'say \\"hi\\"\\\\now'])
+
+    def test_mask_forms_adds_ascii_escaped_spelling_for_non_ascii(self):
+        self.assertEqual(ca.mask_forms("caf\u00e9"), ["caf\u00e9", "caf\\u00e9"])
+
+
 class DefaultGithubTokenTests(unittest.TestCase):
     def test_added_when_absent(self):
         result = ca.add_default_github_token({}, "RUN-TOKEN", "https://github.com")
@@ -316,6 +353,28 @@ class EndToEndTests(unittest.TestCase):
         self.assertIn("::add-mask::" + json.dumps(composed, separators=(",", ":")), proc.stdout)
         self.assertEqual(self.read_output("file-path"), "")
         self.assertFalse(os.path.exists(os.path.join(self.dir, "composer-home", "auth.json")))
+
+    def test_each_credential_is_masked_before_any_other_output(self):
+        proc = self.run_script(auth=ALL_METHODS_YAML)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        lines = proc.stdout.splitlines()
+        masks = [line[len("::add-mask::"):] for line in lines if line.startswith("::add-mask::")]
+        first_other = next(i for i, line in enumerate(lines) if not line.startswith("::add-mask::"))
+        self.assertEqual(first_other, len(masks), "a non-mask line was printed before the masks")
+        for secret in ("RUN-TOKEN", "BEARER-SECRET", "GHE-SECRET", "GL-OAUTH-SECRET", "GL-OAUTH-OBJ-SECRET",
+                       "GL-REFRESH", "GL-TOKEN-SECRET", "GL-TOKEN-OBJ-SECRET", "BB-SECRET",
+                       "X-Api-Key: HEADER-SECRET", "CERT-PASS", "FJ-SECRET", "https://example.com"):
+            self.assertIn(secret, masks, f"{secret!r} was not masked individually")
+        for identifier in ("ACF-KEY-123", "gl-user", "fj-user", "BB-KEY", "/certs/client.pem"):
+            self.assertNotIn(identifier, masks, f"identifier {identifier!r} should not be masked on its own")
+        self.assertEqual(len(masks), len(set(masks)), "duplicate mask commands")
+
+    def test_escaped_spelling_of_credential_is_masked_too(self):
+        proc = self.run_script(auth="bearer:\n  b.example.com: 'say \"hi\" \u00e9'\n", github_token="")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn('::add-mask::say "hi" \u00e9', proc.stdout)      # as a later step would echo the variable
+        self.assertIn('::add-mask::say \\"hi\\" \u00e9', proc.stdout)  # as it appears in auth.json
+        self.assertIn('::add-mask::say \\"hi\\" \\u00e9', proc.stdout)  # as it appears in COMPOSER_AUTH
 
     def test_github_token_empty_omits_entry(self):
         proc = self.run_script(auth="bearer:\n  b.example.com: BEARER-SECRET\n", github_token="")
