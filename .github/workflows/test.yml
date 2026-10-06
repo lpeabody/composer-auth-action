@@ -18,7 +18,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Ensure PyYAML
         shell: bash
         run: |
@@ -36,7 +36,7 @@ jobs:
     name: Schema matches pinned Composer release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Compare SCHEMA with Composer at SCHEMA_VERSION
         shell: bash
         env:
@@ -61,7 +61,7 @@ jobs:
       DUMMY_CERT_PASS: dummy-cert-pass-0007
       DUMMY_GL_OAUTH: dummy-gitlab-oauth-0008
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # ------------------------------------------------------------------ #
       # Composition: all nine methods, env export and file write together.
