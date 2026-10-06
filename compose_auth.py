@@ -63,7 +63,9 @@ SCHEMA: dict[str, dict[str, Any]] = {
     "bitbucket-oauth": {
         "kind": "object",
         "required": {"consumer-key": str, "consumer-secret": str},
-        "optional": {},
+        # Composer writes these two itself; they are accepted for parity with
+        # the schema but you should not normally set them.
+        "optional": {"access-token": str, "access-token-expiration": int},
     },
     "custom-headers": {"kind": "string-list"},
     "client-certificate": {

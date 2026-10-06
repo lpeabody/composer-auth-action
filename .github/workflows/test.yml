@@ -32,6 +32,17 @@ jobs:
         shell: bash
         run: python3 -m unittest discover -s tests -v
 
+  schema-drift:
+    name: Schema matches pinned Composer release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare SCHEMA with Composer at SCHEMA_VERSION
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_schema_drift.py --pinned
+
   action:
     name: Action self-test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

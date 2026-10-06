@@ -1,0 +1,25 @@
+name: Schema drift
+
+# Weekly check that Composer's latest release still has the auth schema the
+# action mirrors. A failure here means upstream changed; see the job output
+# for the release bump each change implies, then re-sync SCHEMA and bump
+# SCHEMA_VERSION.
+on:
+  schedule:
+    - cron: '17 6 * * 1'   # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  latest:
+    name: Schema matches latest Composer release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare SCHEMA with Composer's latest release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_schema_drift.py --latest

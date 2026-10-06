@@ -130,6 +130,14 @@ class ValidateTests(unittest.TestCase):
         self.assert_error("custom-headers:\n  example.com: []\n", "custom-headers.example.com", "empty")
         self.assert_error("custom-headers:\n  example.com:\n    - 'X: y'\n    - \n", "custom-headers.example.com[1]", "empty")
 
+    def test_bitbucket_oauth_accepts_composer_written_keys(self):
+        result = load("bitbucket-oauth:\n  bitbucket.org:\n    consumer-key: k\n    consumer-secret: s\n"
+                      "    access-token: t\n    access-token-expiration: 1700000000\n")
+        self.assertEqual(result["bitbucket-oauth"]["bitbucket.org"],
+                         {"consumer-key": "k", "consumer-secret": "s", "access-token": "t", "access-token-expiration": 1700000000})
+        self.assert_error("bitbucket-oauth:\n  bitbucket.org:\n    consumer-key: k\n    consumer-secret: s\n    access-token-expiration: soon\n",
+                          "bitbucket-oauth.bitbucket.org.access-token-expiration", "integer")
+
     def test_gitlab_oauth_expires_at_must_be_int(self):
         self.assert_error("gitlab-oauth:\n  gitlab.com:\n    token: t\n    expires-at: soon\n",
                           "gitlab-oauth.gitlab.com.expires-at", "integer")

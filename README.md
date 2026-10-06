@@ -79,7 +79,7 @@ at the Composer release recorded in [`SCHEMA_VERSION`](SCHEMA_VERSION).
 | `github-oauth` | string |
 | `gitlab-oauth` | string, or mapping with `token` and optional `refresh-token` (string) and `expires-at` (integer) |
 | `gitlab-token` | string, or mapping with `username` and `token` |
-| `bitbucket-oauth` | mapping with `consumer-key` and `consumer-secret` |
+| `bitbucket-oauth` | mapping with `consumer-key` and `consumer-secret`; `access-token` and `access-token-expiration` are accepted because Composer writes them, but you should not set them |
 | `custom-headers` | list of `"Header-Name: value"` strings |
 | `client-certificate` | mapping with `local_cert` and optional `local_pk`, `passphrase` |
 | `forgejo-token` | mapping with `username` and `token` |
@@ -198,6 +198,22 @@ runs the action itself on Ubuntu and macOS with dummy credentials, asserts the
 composed document, the env export, the file write and merge, the default file
 location, that Composer picks the credentials up, and that each kind of
 invalid input fails the step without writing anything.
+
+### Schema drift check
+
+`scripts/check_schema_drift.py` compares the action's `SCHEMA` with the
+`config` section of Composer's `composer-schema.json` and classifies every
+difference by the release bump it implies.
+
+```sh
+python3 scripts/check_schema_drift.py --pinned   # against the release in SCHEMA_VERSION; runs on every push and PR
+python3 scripts/check_schema_drift.py --latest   # against Composer's latest release; runs weekly
+```
+
+The `Test` workflow fails on any difference from the pinned release. The
+`Schema drift` workflow runs weekly against Composer's latest release and
+fails when upstream has changed the auth schema, so a re-sync can be
+scheduled and `SCHEMA_VERSION` bumped.
 
 ## Versioning
 
