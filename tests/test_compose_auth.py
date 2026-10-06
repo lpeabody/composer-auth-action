@@ -261,6 +261,9 @@ class EndToEndTests(unittest.TestCase):
             "COMPOSER_HOME": os.path.join(self.dir, "composer-home"),
             "INPUT_GITHUB_TOKEN": "RUN-TOKEN",
         }
+        # Keep a private PyYAML install reachable (see the Test workflow).
+        if os.environ.get("PYTHONPATH"):
+            env["PYTHONPATH"] = os.environ["PYTHONPATH"]
         for key, value in inputs.items():
             env["INPUT_" + key.upper().replace("-", "_")] = value
         return subprocess.run(
