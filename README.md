@@ -181,7 +181,7 @@ into the log. The step log lists only method names and hosts.
 ## Requirements
 
 - A runner with `bash` and `python3` (Ubuntu, macOS, and Windows hosted runners all qualify).
-- PyYAML. Ubuntu hosted runners ship it; elsewhere the action installs it with `pip --user` if the import fails.
+- PyYAML. Ubuntu hosted runners ship it; elsewhere the action installs it into a private directory under `RUNNER_TEMP` with `pip --target` if the import fails, leaving the runner's Python untouched.
 
 ## Development
 

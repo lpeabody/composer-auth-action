@@ -62,6 +62,11 @@ runs:
         set -euo pipefail
         PY="$(command -v python3 || command -v python)"
         if ! "$PY" -c 'import yaml' 2>/dev/null; then
-          "$PY" -m pip install --quiet --disable-pip-version-check --user pyyaml
+          # Install into a private directory rather than the runner's Python.
+          # `--target` also sidesteps PEP 668 "externally managed" refusals
+          # (Homebrew Python on macOS runners).
+          deps="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/composer-auth-action-deps"
+          "$PY" -m pip install --quiet --disable-pip-version-check --target "$deps" pyyaml
+          export PYTHONPATH="$deps${PYTHONPATH:+:$PYTHONPATH}"
         fi
         "$PY" "$GITHUB_ACTION_PATH/compose_auth.py"

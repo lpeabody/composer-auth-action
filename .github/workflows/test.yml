@@ -21,7 +21,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Ensure PyYAML
         shell: bash
-        run: python3 -c 'import yaml' || python3 -m pip install --quiet --disable-pip-version-check --user pyyaml
+        run: |
+          set -euo pipefail
+          if ! python3 -c 'import yaml' 2>/dev/null; then
+            deps="$RUNNER_TEMP/pyyaml"
+            python3 -m pip install --quiet --disable-pip-version-check --target "$deps" pyyaml
+            echo "PYTHONPATH=$deps" >> "$GITHUB_ENV"
+          fi
       - name: Run unit tests
         shell: bash
         run: python3 -m unittest discover -s tests -v
