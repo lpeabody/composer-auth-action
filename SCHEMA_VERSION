@@ -1,14 +1,23 @@
 # Composer release whose auth schema this action mirrors.
 #
-# Source: res/composer-schema.json in composer/composer, `config` section,
-# the nine authentication methods (http-basic, bearer, github-oauth,
-# gitlab-oauth, gitlab-token, bitbucket-oauth, custom-headers,
-# client-certificate, forgejo-token). Mirrored in SCHEMA in compose_auth.py.
+# Two sources in composer/composer at that release define the public API:
 #
-# Update this file whenever SCHEMA is re-synced, and state the new Composer
-# version in the release notes. See README.md, "Relationship to Composer's
-# schema", for how upstream changes map to action releases.
+#   docs-file    Which methods exist. The top-level keys of the JSON examples
+#                under "# Authentication methods" in the authentication
+#                article, restricted to keys the schema's `config` section
+#                defines. Today: http-basic, bearer, github-oauth,
+#                gitlab-oauth, gitlab-token, bitbucket-oauth, custom-headers,
+#                client-certificate, forgejo-token.
+#   schema-file  What shape each method's values take: that method's
+#                definition in the `config` section of composer-schema.json.
+#
+# Both are mirrored in SCHEMA in compose_auth.py and checked by
+# scripts/check_schema_drift.py. Update this file whenever SCHEMA is
+# re-synced, and state the new Composer version in the release notes. See
+# README.md, "Relationship to Composer's schema", for how upstream changes
+# map to action releases.
 composer=2.10.3
+docs-file=doc/articles/authentication-for-private-packages.md
 schema-file=res/composer-schema.json
 verified-identical-to=main@dfda78af1ece6a86d32e728d70697f1e3ae2fedf
 synced=2026-10-06

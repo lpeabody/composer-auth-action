@@ -68,9 +68,11 @@ The composed JSON is deliberately **not** an output.
 
 ## Supported methods
 
-The accepted shapes are taken from Composer's own
+The method list comes from Composer's authentication documentation and the
+value shapes from Composer's own
 [`composer-schema.json`](https://github.com/composer/composer/blob/main/res/composer-schema.json),
-at the Composer release recorded in [`SCHEMA_VERSION`](SCHEMA_VERSION).
+both at the Composer release recorded in [`SCHEMA_VERSION`](SCHEMA_VERSION).
+See [Relationship to Composer's schema](#relationship-to-composers-schema).
 
 | Method | Value per host |
 |---|---|
@@ -201,9 +203,10 @@ invalid input fails the step without writing anything.
 
 ### Schema drift check
 
-`scripts/check_schema_drift.py` compares the action's `SCHEMA` with the
-`config` section of Composer's `composer-schema.json` and classifies every
-difference by the release bump it implies.
+`scripts/check_schema_drift.py` reads the documented method list and each
+method's schema definition from Composer at a given release, compares both
+with the action's `SCHEMA`, and classifies every difference by the release
+bump it implies.
 
 ```sh
 python3 scripts/check_schema_drift.py --pinned   # against the release in SCHEMA_VERSION; runs on every push and PR
@@ -237,24 +240,45 @@ change in any release.
 
 ### Relationship to Composer's schema
 
-The accepted YAML mirrors the `config` section of Composer's
-[`composer-schema.json`](https://github.com/composer/composer/blob/main/res/composer-schema.json)
-as of the Composer release named in [`SCHEMA_VERSION`](SCHEMA_VERSION). The
-action tracks that file, so changes upstream flow through as follows:
+Composer has no separate schema for `auth.json`. It validates `auth.json` and
+`COMPOSER_AUTH` against the whole `config` section of its schema, accepts
+unknown keys, and only warns on violations. This action's public API is
+deliberately narrower and is defined by two sources in the Composer release
+named in [`SCHEMA_VERSION`](SCHEMA_VERSION):
+
+1. **Which methods exist**: the authentication methods documented in
+   [`doc/articles/authentication-for-private-packages.md`](https://github.com/composer/composer/blob/main/doc/articles/authentication-for-private-packages.md),
+   read as the top-level keys of the JSON examples under "Authentication
+   methods" that the schema's `config` section defines.
+2. **What shape their values take**: each method's definition in the `config`
+   section of [`composer-schema.json`](https://github.com/composer/composer/blob/main/res/composer-schema.json).
+   Where the prose and the schema differ, the schema wins. For example the
+   article shows `gitlab-oauth` as a token string while the schema also allows
+   the object form Composer's own OAuth flow writes, so the action accepts both.
+
+Consequences:
+
+- Config keys that are not documented authentication methods, such as
+  `platform` or `allow-plugins`, are rejected even though Composer would merge
+  them from `auth.json`. A credentials input is not a channel for changing
+  Composer configuration.
+- The action fails the step where Composer only warns.
+- Within the documented methods, the action accepts exactly what the
+  referenced schema accepts. Where the two disagree, the action is wrong and
+  the fix is a PATCH.
+
+Upstream changes flow through as follows:
 
 | Composer change | Action release |
 |---|---|
-| Adds a method, an optional key, or a wider value type | MINOR |
-| Removes or renames a method or key, adds a required key, or narrows a value type | MAJOR, released only once the Composer version that made the change is generally available |
-| Changes only descriptions or documentation | none |
+| Documents a new method, or the schema adds an optional key or widens a value type | MINOR |
+| Removes a method from the documentation, or the schema removes or renames a key, adds a required key, or narrows a value type | MAJOR, released only once the Composer version that made the change is generally available |
+| Changes only descriptions or prose | none |
 
-The action never accepts input that the referenced Composer release would
-reject, and never rejects input it would accept. Where the two disagree, the
-action is wrong and the fix is a PATCH. Each release note states the Composer
-version whose schema it matches.
-
-If you are on a newer Composer and need a method the action does not yet
-know, open an issue naming the Composer version; support lands as a MINOR.
+Each release note states the Composer version whose documentation and schema
+it matches. If you are on a newer Composer and need a method the action does
+not yet know, open an issue naming the Composer version; support lands as a
+MINOR.
 
 ### Bump rules
 

@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Detect drift between compose_auth.SCHEMA and Composer's composer-schema.json.
+"""Detect drift between compose_auth.SCHEMA and Composer's definition of auth.json.
+
+Two upstream sources at one Composer release define the public API (see
+SCHEMA_VERSION and the README):
+
+  docs-file    which methods exist: the top-level keys of the JSON examples
+               under "# Authentication methods" in the authentication article
+               that the schema's `config` section defines;
+  schema-file  what shape each method's values take: its definition in the
+               `config` section of composer-schema.json.
 
 Modes:
   --pinned   Compare against the Composer release recorded in SCHEMA_VERSION.
@@ -19,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.request
 from typing import Any
@@ -31,11 +41,7 @@ import compose_auth  # noqa: E402
 RAW_URL = "https://raw.githubusercontent.com/composer/composer/{ref}/{path}"
 LATEST_URL = "https://api.github.com/repos/composer/composer/releases/latest"
 
-# Keys in Composer's `config` section that have an object-valued
-# `additionalProperties` (the structural signature of a per-host auth method)
-# but are not authentication methods. A new key with that shape that is in
-# neither this list nor SCHEMA is reported so a human can classify it.
-NON_AUTH_CONFIG_KEYS = {"platform", "allow-plugins", "preferred-install", "policy"}
+DOCS_METHODS_HEADING = "\n# Authentication methods"
 
 JSON_TYPE_NAMES = {"string": "str", "integer": "int"}
 
@@ -49,20 +55,64 @@ def read_schema_version(path: str) -> dict[str, str]:
                 continue
             key, _, value = line.partition("=")
             values[key.strip()] = value.strip()
-    for required in ("composer", "schema-file"):
+    for required in ("composer", "docs-file", "schema-file"):
         if required not in values:
             raise SystemExit(f"SCHEMA_VERSION is missing '{required}='")
     return values
 
 
-def fetch_json(url: str) -> Any:
+def fetch_text(url: str) -> str:
     headers = {"User-Agent": "composer-auth-action schema drift check"}
     token = os.environ.get("GITHUB_TOKEN")
     if token and url.startswith("https://api.github.com/"):
         headers["Authorization"] = f"Bearer {token}"
     request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=30) as response:
-        return json.load(response)
+        return response.read().decode("utf-8")
+
+
+def fetch_json(url: str) -> Any:
+    return json.loads(fetch_text(url))
+
+
+def documented_methods(docs_markdown: str, config: dict[str, Any]) -> list[str]:
+    """Top-level keys of the JSON examples under "# Authentication methods"
+    that are also keys of the schema's `config` section, in document order."""
+    try:
+        start = docs_markdown.index(DOCS_METHODS_HEADING)
+    except ValueError:
+        raise SystemExit(
+            f"docs-file: heading {DOCS_METHODS_HEADING.strip()!r} not found; "
+            "the article was restructured, update the drift check"
+        ) from None
+    blocks = re.findall(r"```json\n(.*?)```", docs_markdown[start:], re.S)
+    if not blocks:
+        raise SystemExit("docs-file: no JSON examples found under the methods heading; update the drift check")
+    methods: list[str] = []
+    undefined: list[str] = []
+    for index, block in enumerate(blocks):
+        try:
+            data = json.loads(block)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"docs-file: JSON example {index} does not parse ({exc.msg}); update the drift check") from None
+        if not isinstance(data, dict):
+            continue
+        for key in data:
+            if key in config:
+                if key not in methods:
+                    methods.append(key)
+            elif key not in ("repositories", "config") and key not in undefined:
+                # `repositories` appears in the inline composer.json examples
+                # and is not an auth.json parameter.
+                undefined.append(key)
+    if undefined:
+        raise SystemExit(
+            "docs-file: documented example key(s) have no definition in the schema's config section: "
+            + ", ".join(undefined) + "; classify by hand"
+        )
+    if not methods:
+        raise SystemExit("docs-file: no documented methods matched the schema; update the drift check")
+    return methods
 
 
 def latest_composer_tag() -> str:
@@ -116,10 +166,10 @@ def classify(method: str, local: dict[str, Any] | None, upstream: dict[str, Any]
     """Describe differences and the release bump each implies."""
     notes: list[str] = []
     if local is None:
-        notes.append(f"{method}: new upstream method -> MINOR (add to SCHEMA)")
+        notes.append(f"{method}: newly documented upstream -> MINOR (add to SCHEMA)")
         return notes
     if upstream is None:
-        notes.append(f"{method}: removed upstream -> MAJOR (drop from SCHEMA)")
+        notes.append(f"{method}: no longer documented upstream -> MAJOR (drop from SCHEMA)")
         return notes
     if local["kind"] != upstream["kind"]:
         widening = (local["kind"], upstream["kind"]) == ("object", "string-or-object")
@@ -147,35 +197,31 @@ def classify(method: str, local: dict[str, Any] | None, upstream: dict[str, Any]
     return notes
 
 
-def compare(ref: str, schema_file: str) -> int:
+def compare(ref: str, docs_file: str, schema_file: str) -> int:
     document = fetch_json(RAW_URL.format(ref=ref, path=schema_file))
     config = document["properties"]["config"]["properties"]
+    documented = documented_methods(fetch_text(RAW_URL.format(ref=ref, path=docs_file)), config)
     local = normalise_local()
 
     problems: list[str] = []
-    for method in sorted(set(local) | set(m for m in config if m in local)):
-        if method not in config:
+    for method in sorted(set(local) | set(documented)):
+        if method not in documented:
             problems.extend(classify(method, local[method], None))
             continue
         upstream = normalise_composer(method, config[method])
+        if method not in local:
+            problems.extend(classify(method, None, upstream))
+            continue
         if upstream != local[method]:
             problems.extend(classify(method, local[method], upstream) or [f"{method}: differs"])
 
-    for key, schema in config.items():
-        if key in local or key in NON_AUTH_CONFIG_KEYS:
-            continue
-        if isinstance(schema.get("additionalProperties"), dict):
-            problems.append(
-                f"{key}: new config key shaped like an auth method; add it to SCHEMA (MINOR) "
-                "or to NON_AUTH_CONFIG_KEYS in scripts/check_schema_drift.py"
-            )
-
+    label = f"Composer {ref} ({docs_file}, {schema_file})"
     if problems:
-        print(f"SCHEMA differs from Composer {ref} ({schema_file}):")
+        print(f"SCHEMA differs from {label}:")
         for problem in problems:
             print(f"  - {problem}")
         return 1
-    print(f"SCHEMA matches Composer {ref} ({schema_file}): {len(local)} methods verified.")
+    print(f"SCHEMA matches {label}: {len(documented)} documented methods verified.")
     return 0
 
 
@@ -195,7 +241,7 @@ def main(argv: list[str]) -> int:
             print(f"Composer's latest release is still {ref}, the pinned version.")
         else:
             print(f"Composer's latest release is {ref}; SCHEMA_VERSION pins {version['composer']}.")
-    rc = compare(ref, version["schema-file"])
+    rc = compare(ref, version["docs-file"], version["schema-file"])
     if rc == 0 and args.latest and ref != version["composer"]:
         print("No auth schema changes between the two; bump SCHEMA_VERSION to "
               f"{ref} in the next release to keep the reference current.")
